@@ -167,10 +167,7 @@ HTML
 
     my $eng  = Text::Caml->new;
     my $view = $eng->render($tmpl, $vars);
-
-    open( my $fh, '>', $fname ) or fail("Error opening $fname: $!");
-    print $fh $view;
-    close $fh;
+    print STDOUT $view;
 }
 
 sub fail {
