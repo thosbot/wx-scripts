@@ -20,12 +20,12 @@ use Time::HiRes qw/ gettimeofday /;
 
 my $VERBOSE;
 
-exit( main(@ARGV) );
+exit(main(@ARGV));
 
 sub main {
     GetOptions(
-        'help|h'    => sub { pod2usage( -exitstatus => 0, -verbose => 1 ) },
-        'man'       => sub { pod2usage( -exitstatus => 0, -verbose => 2 ) },
+        'help|h'    => sub { pod2usage(-exitstatus => 0, -verbose => 1) },
+        'man'       => sub { pod2usage(-exitstatus => 0, -verbose => 2) },
         'verbose|v' => \$VERBOSE,
     ) || pod2usage(1);
 
@@ -36,10 +36,10 @@ sub main {
         'Content-Type' => 'application/x-www-form-urlencoded; charset=utf-8'
     );
 
-    my $token = authenticate( $ua );
-    my $content = get_station_data( $ua, $token );
-    my $vars = extract_vars( $content );
-    write_html( $vars );
+    my $token = authenticate($ua);
+    my $content = get_station_data($ua, $token);
+    my $vars = extract_vars($content);
+    write_html($vars);
 
     note("Done $0");
     exit 0;
@@ -88,7 +88,7 @@ sub authenticate {
         $token = $auth->{access_token};
 
         # Write auth response to dotfile
-        open( my $fh, '>', '.netatmo-auth' );
+        open my $fh, '>', '.netatmo-auth';
         print $fh encode_json $auth;
         close $fh;
     }
@@ -133,7 +133,7 @@ sub extract_vars {
     my $mod   = $dev->{modules}->[0];
 
     my $epoch = $dev->{dashboard_data}->{time_utc};
-    my $ts    = strftime "%a %d %b %Y %T %Z(%z)", localtime( $epoch );
+    my $ts    = strftime "%a %d %b %Y %T %Z(%z)", localtime($epoch);
 
     # Get temperature from outdoor module
     my $temp_c = $mod->{dashboard_data}->{Temperature};
@@ -176,7 +176,7 @@ HTML
 sub fail {
     # Turn on verbosity on error
     $VERBOSE = 1;
-    note( $_[0] );
+    note($_[0]);
     exit 1;
 }
 
