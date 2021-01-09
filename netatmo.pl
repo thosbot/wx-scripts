@@ -105,6 +105,7 @@ sub get_station_data {
         'https://api.netatmo.com/api/getstationsdata',
         [
             access_token => $token,
+            # TODO: Get device ID from config.
             device_id    => '70:ee:50:1f:3c:48',
         ]
     );
@@ -112,6 +113,7 @@ sub get_station_data {
     if ( !$res->is_success ) {
         if ( $res->code == 403 ) {
             # TODO
+            # https://dev.netatmo.com/en-US/resources/technical/guides/authentication/refreshingatoken
             fail("Received 403 -- need to send refresh token request");
         }
 
@@ -157,6 +159,7 @@ sub extract_vars {
 sub write_html {
     my ($vars) = @_;
 
+    # TODO: Take output file as command line arg.
     my $fname = "wx.html";
     note("Writing HTML output to $fname");
 
