@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use v5.28;
+use v5.10;
 
 use Getopt::Long;
 Getopt::Long::Configure('bundling');
@@ -14,7 +14,6 @@ use JSON::XS;
 use LWP::UserAgent;
 use Text::Caml;
 
-use Data::Dumper;
 use POSIX qw/ strftime /;
 use Time::HiRes qw/ gettimeofday /;
 
