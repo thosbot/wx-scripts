@@ -79,6 +79,8 @@ sub main {
     my $resp = get("$url/$serv?$query");
 
     my $dat = {
+        date      => '',
+
         sunrise   => '',
         sunset    => '',
         daylength => '',
@@ -91,10 +93,11 @@ sub main {
     my $astro = decode_json $resp;
     foreach my $obj (@{ $astro->{locations}[0]->{astronomy}->{objects} }) {
         if ($obj->{name} eq 'sun') {
-            my $today = $obj->{days}[0];
-            $dat->{daylength} = $today->{daylength};
+            my $day = $obj->{days}[0];
+            $dat->{date} = $day->{date};
+            $dat->{daylength} = $day->{daylength};
 
-            foreach my $evt (@{$today->{events}}) {
+            foreach my $evt (@{$day->{events}}) {
                 $dat->{'sun' . $evt->{type}} = get_time($evt->{hour}, $evt->{min});
             }
         }
@@ -102,8 +105,8 @@ sub main {
             my $ph = $obj->{current}->{moonphase};
             $dat->{moonphase} = $PHASE_MAP->{$ph} || $obj->{current}->{moonphase};
 
-            my $today = $obj->{days}[0];
-            foreach my $evt (@{$today->{events}}) {
+            my $day = $obj->{days}[0];
+            foreach my $evt (@{$day->{events}}) {
                 $dat->{'moon' . $evt->{type}} = get_time($evt->{hour}, $evt->{min});
             }
         }
