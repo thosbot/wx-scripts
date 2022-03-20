@@ -14,7 +14,10 @@ use JSON::XS;
 use LWP::Simple;
 use Digest::HMAC_SHA1;
 use URI::Escape;
+
 use POSIX qw/ strftime /;
+use Time::HiRes qw/ gettimeofday /;
+
 
 my $VERBOSE;
 my ($PATH, $DATE, $PLACE);
