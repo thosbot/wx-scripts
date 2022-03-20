@@ -25,11 +25,15 @@ my ($PATH, $DATE, $PLACE);
 my $PHASE_MAP = {
     waxingcrescent => 'wax. crescent',
     firstquarter   => 'first qt.',
+    secondquarter  => 'second qt.',
     waxinggibbous  => 'wax. gibbous',
+    fullmoon       => 'full moon',
 
     waninggibbous  => 'wan. gibbous',
+    thirdquarter   => 'third qt.',
     lastquarter    => 'last qt.',
     waningcrescent => 'wan. crescent',
+    newmoon        => 'new moon',
 };
 
 exit(main(@ARGV));
