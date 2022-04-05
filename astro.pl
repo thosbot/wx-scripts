@@ -9,9 +9,11 @@ use Getopt::Long;
 Getopt::Long::Configure('bundling');
 use Pod::Usage;
 
+use Data::Dumper;
 use YAML::XS qw/ LoadFile /;
 use JSON::XS;
 use LWP::Simple;
+use LWP::Protocol::https;
 use Digest::HMAC_SHA1;
 use URI::Escape;
 
@@ -57,15 +59,15 @@ sub main {
 
     my $config = LoadFile $PATH || fail("Couldn't open $PATH");
 
-    my $url = 'https://api.xmltime.com';
-    note("Connecting to $url");
+    my $domain = 'https://api.xmltime.com';
+    note("Connecting to $domain ...");
     my $tok = $config->{token};
     my $key = $config->{key};
 
-    my $serv = 'astronomy';
+    my $api = 'astronomy';
     my $ts = strftime("%FT%T", gmtime());
     my $hmac = Digest::HMAC_SHA1->new($key);
-    $hmac->add("$tok$serv$ts");
+    $hmac->add("$tok$api$ts");
     my $sig = $hmac->b64digest;
 
     my %arg = (
@@ -82,8 +84,11 @@ sub main {
     $arg{timestamp} = $ts;
     $arg{signature} = $sig;
 
-    my $query = join(';', map { "$_=" . uri_escape($arg{$_}) } keys %arg);
-    my $resp = get("$url/$serv?$query");
+    my $query = join('&', map { "$_=" . uri_escape($arg{$_}) } keys %arg);
+    my $url = "$domain/$api?$query";
+    my $resp = get($url);
+
+    # TODO: Check status code for failure.
 
     my $dat = {
         date      => '',
@@ -147,6 +152,12 @@ sub note {
     my ($seconds, $microseconds) = gettimeofday();
     my $ts = strftime "%Y-%m-%d %H:%M:%S", localtime $seconds;
     $ts .= '.' . sprintf "%s", substr $microseconds, 0, 2;
+
+    # Deref any objects
+    if (ref($msg)) {
+        print STDERR "[$ts] " . Dumper($msg);
+        return;
+    }
 
     print STDERR "[$ts] $msg\n";
 }
