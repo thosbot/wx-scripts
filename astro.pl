@@ -1,5 +1,7 @@
 #!/usr/bin/env perl
 
+# See: https://dev.timeanddate.com/docs/astro
+
 use strict;
 use warnings;
 
@@ -16,12 +18,8 @@ use LWP::Simple;
 use LWP::Protocol::https;
 use Digest::HMAC_SHA1;
 use URI::Escape;
-
 use POSIX qw/ strftime /;
-use Time::HiRes qw/ gettimeofday /;
 
-
-my $VERBOSE;
 my ($PATH, $DATE, $PLACE);
 
 my $PHASE_MAP = {
@@ -48,19 +46,16 @@ sub main {
 
         'help|h'     => sub { pod2usage(-exitstatus => 0, -verbose => 1) },
         'man'        => sub { pod2usage(-exitstatus => 0, -verbose => 2) },
-        'verbose|v'  => \$VERBOSE,
     ) || pod2usage(1);
 
-    note("Running $0");
+    die('No config') unless $PATH;
+    die('No date') unless $DATE;
+    die('No place') unless $PLACE;
 
-    fail('No config') unless $PATH;
-    fail('No date') unless $DATE;
-    fail('No place') unless $PLACE;
-
-    my $config = LoadFile $PATH || fail("Couldn't open $PATH");
+    my $config = LoadFile $PATH || die("Couldn't open $PATH");
 
     my $domain = 'https://api.xmltime.com';
-    note("Connecting to $domain ...");
+
     my $tok = $config->{token};
     my $key = $config->{key};
 
@@ -88,21 +83,17 @@ sub main {
     my $url = "$domain/$api?$query";
     my $resp = get($url);
 
-    # TODO: Check status code for failure.
-
     my $dat = {
         date      => '',
-
         sunrise   => '',
         sunset    => '',
         daylength => '',
-
         moonrise  => '',
         moonset   => '',
         moonphase => '',
     };
 
-    my $astro = decode_json $resp;
+    my $astro = decode_json($resp);
     foreach my $obj (@{ $astro->{locations}[0]->{astronomy}->{objects} }) {
         if ($obj->{name} eq 'sun') {
             my $day = $obj->{days}[0];
@@ -123,7 +114,7 @@ sub main {
             }
         }
     }
-    say encode_json $dat;
+    say encode_json($dat);
 }
 
 sub get_time {
@@ -136,32 +127,6 @@ sub get_time {
     return $_[0] . ':' . $_[1];
 }
 
-sub fail {
-    # Turn on verbosity on error
-    $VERBOSE = 1;
-    note($_[0]);
-    exit 1;
-}
-
-sub note {
-    return unless $VERBOSE; # Only write output if verbose flag has been set
-
-    my ($msg) = @_;
-
-    # Create timestamp with microseconds
-    my ($seconds, $microseconds) = gettimeofday();
-    my $ts = strftime "%Y-%m-%d %H:%M:%S", localtime $seconds;
-    $ts .= '.' . sprintf "%s", substr $microseconds, 0, 2;
-
-    # Deref any objects
-    if (ref($msg)) {
-        print STDERR "[$ts] " . Dumper($msg);
-        return;
-    }
-
-    print STDERR "[$ts] $msg\n";
-}
-
 __END__
 
 =head1 NAME
@@ -170,7 +135,7 @@ astro.pl - Download sun and moon stats from timeanddate.com.
 
 =head1 SYNOPSIS
 
-astro.pl
+astro.pl --date [YYYY-MM-DD] --place [PLACE-ID] --config [CONFIG-PATH]
 
 =head1 DESCRIPTION
 
@@ -180,10 +145,8 @@ astro.pl fetches sun and moon data for the date and place provided.
  -c, --config   Config YAML with token and key
  -p, --place
  -d, --date     YYYY-MM-DD
-
  -h, --help     Display help message
      --man      Complete documentation
- -v, --verbose  Increase verbosity
 
 =head1 AUTHOR
 
