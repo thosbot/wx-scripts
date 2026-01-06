@@ -17,7 +17,6 @@ use Text::Caml;
 use POSIX qw/ strftime /;
 use Time::HiRes qw/ gettimeofday /;
 
-my $VERBOSE;
 
 exit(main(@ARGV));
 
@@ -28,7 +27,6 @@ sub main {
         'verbose|v' => \$VERBOSE,
     ) || pod2usage(1);
 
-    note("Running $0");
 
     my $ua = LWP::UserAgent->new;
     $ua->default_header(
@@ -39,31 +37,28 @@ sub main {
     my $content = get_station_data($ua, $token);
     my $vars = extract_vars($content);
     write_html($vars);
-
-    note("Done $0");
-    exit 0;
 }
 
 # https://dev.netatmo.com/resources/technical/samplessdks/tutorials
 sub authenticate {
     my ($ua) = @_;
 
-    note("Authenticating");
     # Look for a stored authorization token
+    say "Authenticating ...";
     my $token;
     if ( -e '.netatmo-auth' ) {
-        note("Reading stored auth token");
+        say "Reading stored auth token";
         open( my $fh, '<:encoding(UTF-8)', '.netatmo-auth' )
-            or fail("Error reading auth token: $!");
-        my $auth = decode_json <$fh>;
+            or die "Error reading auth token: $!";
+        my $auth = decode_json(<$fh>);
         close $fh;
         $token = $auth->{access_token};
     }
 
     # Generate a new auth token
     if ( !$token ) {
-        note("Requesting new auth token");
         my $config = LoadFile 'nwx.yml';
+        say "Requesting new auth token";
         my $res = $ua->post(
             'https://api.netatmo.com/oauth2/token',
             [
@@ -80,15 +75,15 @@ sub authenticate {
             my $err = sprintf(
                 "Auth request failed: %s %s", $res->code, $res->message
             );
-            fail($err);
+            die $err;
         }
 
-        my $auth = decode_json $res->decoded_content;
+        my $auth = decode_json($res->decoded_content);
         $token = $auth->{access_token};
 
         # Write auth response to dotfile
         open my $fh, '>', '.netatmo-auth';
-        print $fh encode_json $auth;
+        print $fh encode_json($auth);
         close $fh;
     }
 
@@ -99,7 +94,7 @@ sub authenticate {
 sub get_station_data {
     my ($ua, $token) = @_;
 
-    note("Getting station data");
+    say "Getting station data";
     my $res = $ua->post(
         'https://api.netatmo.com/api/getstationsdata',
         [
@@ -113,17 +108,16 @@ sub get_station_data {
         if ( $res->code == 403 ) {
             # TODO
             # https://dev.netatmo.com/en-US/resources/technical/guides/authentication/refreshingatoken
-            fail("Received 403 -- need to send refresh token request");
+            die "Received 403 -- need to send refresh token request";
         }
 
         my $err = sprintf(
             "Auth request failed: %s %s", $res->code, $res->message
         );
-        fail($err);
+        die $err;
     }
 
-    my $content = decode_json $res->decoded_content;
-    return $content;
+    return decode_json($res->decoded_content);
 }
 
 sub extract_vars {
@@ -160,7 +154,7 @@ sub write_html {
 
     # TODO: Take output file as command line arg.
     my $fname = "wx.html";
-    note("Writing HTML output to $fname");
+    say "Writing HTML output to $fname";
 
     my $tmpl = <<HTML;
 <!-- {{timestamp}} -->
@@ -170,27 +164,6 @@ HTML
     my $eng  = Text::Caml->new;
     my $view = $eng->render($tmpl, $vars);
     print STDOUT $view;
-}
-
-sub fail {
-    # Turn on verbosity on error
-    $VERBOSE = 1;
-    note($_[0]);
-    exit 1;
-}
-
-sub note {
-    # Only write output if verbose flag has been set
-    return unless $VERBOSE;
-
-    my ($msg) = @_;
-
-    # Create timestamp with microseconds
-    my ($seconds, $microseconds) = gettimeofday();
-    my $ts = strftime "%Y-%m-%d %H:%M:%S", localtime $seconds;
-    $ts .= '.' . sprintf "%s", substr $microseconds, 0, 2;
-
-    print STDERR "[$ts] $msg\n";
 }
 
 __END__
@@ -211,7 +184,6 @@ Blah, blah, blah ...
 
  -h, --help     Display help message
      --man      Complete documentation
- -v, --verbose  Increase verbosity
 
 =head1 AUTHOR
 
