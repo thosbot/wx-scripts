@@ -12,118 +12,239 @@ use Pod::Usage;
 use YAML::XS qw/ LoadFile /;
 use JSON::XS;
 use LWP::UserAgent;
+use LWP::Protocol::https;
 use Text::Caml;
+use File::XDG;
 
 use POSIX qw/ strftime /;
 use Time::HiRes qw/ gettimeofday /;
+use File::Spec::Functions qw/ catfile /;
 
+my $xdg = File::XDG->new(name => 'wx-scripts');
+sub get_auth_file_path {
+    return $xdg->config_home . '/netatmo-auth.json';
+}
 
 exit(main(@ARGV));
 
 sub main {
+    my $config_file;
+    my $output_file;
+
     GetOptions(
-        'help|h'    => sub { pod2usage(-exitstatus => 0, -verbose => 1) },
-        'man'       => sub { pod2usage(-exitstatus => 0, -verbose => 2) },
-        'verbose|v' => \$VERBOSE,
+        'config|c=s' => \$config_file,
+        'output|o=s' => \$output_file,
+        'help|h'     => sub { pod2usage(-exitval => 0, -verbose => 1) },
+        'man'        => sub { pod2usage(-exitval => 0, -verbose => 2) },
     ) || pod2usage(1);
 
+    pod2usage(
+        { -msg => "Missing required --config option", -exitval => 1, -verbose => 1 }
+    ) unless $config_file;
+
+    my $config;
+    eval {
+        $config = LoadFile $config_file;
+    };
+    if ($@ or !$config) {
+        die "Failed to load or parse config file '$config_file': $@";
+    }
+
+    my $device_id = $config->{device_id}
+        or die "Failed to find device_id in config file '$config_file'";
 
     my $ua = LWP::UserAgent->new;
     $ua->default_header(
         'Content-Type' => 'application/x-www-form-urlencoded; charset=utf-8'
     );
 
-    my $token = authenticate($ua);
-    my $content = get_station_data($ua, $token);
-    my $vars = extract_vars($content);
-    write_html($vars);
+    my $token = authenticate($ua, $config);
+    my $data  = get_station_data($ua, $token, $device_id);
+    my $vars  = extract_vars($data);
+
+    write_html($vars, $output_file);
 }
 
-# https://dev.netatmo.com/resources/technical/samplessdks/tutorials
 sub authenticate {
-    my ($ua) = @_;
+    my ($ua, $config) = @_;
 
-    # Look for a stored authorization token
     say "Authenticating ...";
-    my $token;
-    if ( -e '.netatmo-auth' ) {
-        say "Reading stored auth token";
-        open( my $fh, '<:encoding(UTF-8)', '.netatmo-auth' )
-            or die "Error reading auth token: $!";
-        my $auth = decode_json(<$fh>);
-        close $fh;
-        $token = $auth->{access_token};
+    my $auth = read_auth_file();
+    if (!$auth) {
+        return authenticate_oauth($ua, $config);
     }
 
-    # Generate a new auth token
-    if ( !$token ) {
-        my $config = LoadFile 'nwx.yml';
-        say "Requesting new auth token";
-        my $res = $ua->post(
-            'https://api.netatmo.com/oauth2/token',
-            [
-                client_id     => $config->{client_id},
-                client_secret => $config->{client_secret},
-                grant_type    => 'password',
-                username      => $config->{username},
-                password      => $config->{password},
-                scope         => 'read_station',
-            ]
-        );
-
-        if ( !$res->is_success ) {
-            my $err = sprintf(
-                "Auth request failed: %s %s", $res->code, $res->message
-            );
-            die $err;
-        }
-
-        my $auth = decode_json($res->decoded_content);
-        $token = $auth->{access_token};
-
-        # Write auth response to dotfile
-        open my $fh, '>', '.netatmo-auth';
-        print $fh encode_json($auth);
-        close $fh;
+    # Always refresh token :/
+    my $token = $auth->{access_token};
+    eval {
+        $token = refresh_token($ua, $config, $auth);
+    };
+    if ($@) {
+        say "Refresh failed, re-authenticating ...";
+        $token = authenticate_oauth($ua, $config);
     }
-
     return $token;
+}
+
+sub authenticate_oauth {
+    my ($ua, $config) = @_;
+
+    my $client_id     = $config->{client_id};
+    my $client_secret = $config->{client_secret};
+    my $redirect_uri  = $config->{redirect_uri} // 'http://localhost';
+
+    my $auth_url = "https://api.netatmo.com/oauth2/authorize?" .
+        "client_id=$client_id" .
+        "&redirect_uri=$redirect_uri" .
+        "&scope=read_station" .
+        "&response_type=code" .
+        "&state=xyz";
+
+    say "Please open the following URL in your browser and authorize the app:";
+    say $auth_url;
+    print "Enter the code parameter from the redirected URL: ";
+    chomp(my $code = <STDIN>);
+
+    my $res = $ua->post(
+        'https://api.netatmo.com/oauth2/token',
+        [
+            grant_type    => 'authorization_code',
+            client_id     => $client_id,
+            client_secret => $client_secret,
+            code          => $code,
+            redirect_uri  => $redirect_uri,
+        ]
+    );
+
+    if (!$res->is_success) {
+        die "Failed to get OAuth token: " . $res->status_line . "\n" . $res->decoded_content;
+    }
+
+    my $auth;
+    eval {
+        $auth = decode_json($res->decoded_content);
+    };
+    if ($@ or !$auth) {
+        die "Failed to parse auth response: $@";
+    }
+    write_auth_file($auth);
+
+    return $auth->{access_token};
+}
+
+sub refresh_token {
+    my ($ua, $config, $auth) = @_;
+
+    if (!$auth) {
+        $auth = read_auth_file();
+    }
+
+    my $refresh_token = $auth->{refresh_token};
+    if (!$refresh_token) {
+        die "Failed to find refresh_token in auth file";
+    }
+
+    my $client_id     = $config->{client_id};
+    my $client_secret = $config->{client_secret};
+
+    say "Refreshing access token ...";
+    my $res = $ua->post(
+        'https://api.netatmo.com/oauth2/token',
+        [
+            grant_type    => 'refresh_token',
+            refresh_token => $refresh_token,
+            client_id     => $client_id,
+            client_secret => $client_secret,
+        ]
+    );
+
+    if (!$res->is_success) {
+        die "Failed to refresh token: " . $res->status_line . "\n" . $res->decoded_content;
+    }
+
+    my $new_auth;
+    eval {
+        $new_auth = decode_json($res->decoded_content);
+    };
+    if ($@ or !$new_auth) {
+        die "Failed to parse refresh response: $@";
+    }
+    write_auth_file($new_auth);
+
+    return $new_auth->{access_token};
+}
+
+sub read_auth_file {
+    my $auth;
+    my $auth_file = get_auth_file_path();
+    eval {
+        open my $fh, '<:encoding(UTF-8)', $auth_file
+            or die "Failed to read auth token file: $!";
+        $auth = decode_json(<$fh>);
+        close $fh;
+    };
+    # XXX: Does $@ only represent the file close?
+    if ($@ or !$auth) {
+        die "Failed to load or parse auth file '$auth_file': $@";
+    }
+    return $auth;
+}
+
+sub write_auth_file {
+    my ($auth_data) = @_;
+
+    # Ensure the config directory exists
+    my $config_dir = $xdg->config_home;
+    if (!-d $config_dir) {
+        mkdir $config_dir, 0700
+            or die "Failed to create config directory '$config_dir': $!";
+    }
+
+    my $auth_file = get_auth_file_path();
+    open my $fh, '>', $auth_file
+        or die "Failed to open auth file for writing: $!";
+    chmod 0600, $auth_file;
+    # TODO: Error check encode_json.
+    print $fh encode_json($auth_data);
+    close $fh;
 }
 
 # https://dev.netatmo.com/resources/technical/reference/weather/getstationsdata
 sub get_station_data {
-    my ($ua, $token) = @_;
+    my ($ua, $token, $device_id) = @_;
 
-    say "Getting station data";
+    say "Getting station data ...";
     my $res = $ua->post(
         'https://api.netatmo.com/api/getstationsdata',
         [
             access_token => $token,
-            # TODO: Get device ID from config.
-            device_id    => '70:ee:50:1f:3c:48',
+            device_id    => $device_id,
         ]
     );
 
     if ( !$res->is_success ) {
         if ( $res->code == 403 ) {
-            # TODO
-            # https://dev.netatmo.com/en-US/resources/technical/guides/authentication/refreshingatoken
-            die "Received 403 -- need to send refresh token request";
+            die "Failed to access API (403 Forbidden): token may be expired";
         }
 
-        my $err = sprintf(
-            "Auth request failed: %s %s", $res->code, $res->message
-        );
-        die $err;
+        die "Failed to get station data: " . $res->code . " " . $res->message;
     }
 
-    return decode_json($res->decoded_content);
+    my $data;
+    eval {
+        $data = decode_json($res->decoded_content);
+    };
+    if ($@ or !$data) {
+        die "Failed to parse API response: $@";
+    }
+
+    return $data;
 }
 
 sub extract_vars {
-    my ($content) = @_;
+    my ($data) = @_;
 
-    my $body  = $content->{body};
+    my $body  = $data->{body};
     my $dev   = $body->{devices}->[0];
     my $mod   = $dev->{modules}->[0];
 
@@ -150,11 +271,7 @@ sub extract_vars {
 }
 
 sub write_html {
-    my ($vars) = @_;
-
-    # TODO: Take output file as command line arg.
-    my $fname = "wx.html";
-    say "Writing HTML output to $fname";
+    my ($vars, $output_file) = @_;
 
     my $tmpl = <<HTML;
 <!-- {{timestamp}} -->
@@ -163,27 +280,71 @@ HTML
 
     my $eng  = Text::Caml->new;
     my $view = $eng->render($tmpl, $vars);
-    print STDOUT $view;
+
+    if ($output_file) {
+        say "Writing HTML output to $output_file ...";
+        open my $fh, '>', $output_file
+            or die "Failed to open output file '$output_file': $!";
+        print $fh $view;
+        close $fh;
+    } else {
+        print STDOUT $view;
+    }
 }
 
 __END__
 
 =head1 NAME
 
-nwx.pl - Download latest Netatmo weather station data and write to HTML snippet.
+netatmo.pl - Download latest Netatmo weather station data and write to HTML
+snippet.
 
 =head1 SYNOPSIS
 
-nwx.pl
+netatmo.pl [options]
 
 =head1 DESCRIPTION
 
-Blah, blah, blah ...
+Fetches weather data from a Netatmo weather station and writes an HTML snippet.
+
+This script uses OAuth2 authentication to access the Netatmo API. On first run,
+you will be prompted to visit a URL in your browser to authorize the
+application and paste back the resulting code. After initial authorization,
+the script will automatically refresh the access token as needed.
+
+=head1 CONFIGURATION
+
+You must provide a YAML config file with the following keys:
+
+  client_id:      Your Netatmo API client ID
+  client_secret:  Your Netatmo API client secret
+  redirect_uri:   The redirect URI registered with your Netatmo app
+  device_id:      The MAC address of your Netatmo base station
+
+Example nwx.yml:
+
+  client_id:      "your_client_id"
+  client_secret:  "your_client_secret"
+  redirect_uri:   "http://localhost"
+  device_id:      "ff:ff:ff:ff:ff:ff"
 
 =head1 OPTIONS
 
- -h, --help     Display help message
-     --man      Complete documentation
+ -c, --config FILE  Path to config YAML file (required)
+ -o, --output FILE  Output HTML file (default: STDOUT)
+ -h, --help         Display help message
+     --man          Complete documentation
+ -v, --verbose      Verbose output
+
+=head1 OAUTH FLOW
+
+On first run, the script will print a URL. Open this URL in your browser, log
+in to Netatmo, and authorize the application. You will be redirected to your
+redirect_uri with a C<code> parameter in the URL. Paste this code back into
+the script prompt to complete authentication.
+
+The script will store the access and refresh tokens in a local file (default:
+.netatmo-auth) for future use.
 
 =head1 AUTHOR
 
