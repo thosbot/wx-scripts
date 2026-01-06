@@ -1,1 +1,22 @@
+# Ctags
 tags
+
+# Backup files
+*.bak
+*.backup
+
+# Vim temporary files
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+
+# Vim session files
+Session.vim
+
+# Vim undo files
+*.un~
+
+# Netrw directory listing
+.netrwhist
